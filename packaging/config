@@ -1,0 +1,7 @@
+# HealthcheckD main configuration
+# See documentation for all options
+
+port: 9990
+bind: "0.0.0.0"
+check_frequency: 30
+log_level: INFO

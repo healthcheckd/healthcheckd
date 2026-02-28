@@ -1,0 +1,21 @@
+# Example: check that sshd is running and enabled
+# Rename this file to sshd.yaml (or any name) to activate
+#
+# type: systemd
+# unit: sshd.service
+# expected_states: running,enabled
+
+# Example: check that a command succeeds
+# type: run
+# command: ["/usr/bin/true"]
+# expected_result: "0"
+
+# Example: check an HTTP endpoint
+# type: http
+# url: https://example.com
+# expected_result: 200
+
+# Example: check TCP port connectivity
+type: tcp
+host: 127.0.0.1
+port: 22
