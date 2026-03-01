@@ -132,3 +132,11 @@ jobs:
         uses: softprops/action-gh-release@v1
         with:
           files: release/*
+
+      - name: Trigger repo rebuild
+        run: |
+          gh api repos/healthcheckd/healthcheckd.github.io/dispatches \
+            -f event_type=release-published \
+            -f 'client_payload[tag]=${{ github.ref_name }}'
+        env:
+          GH_TOKEN: ${{ secrets.DISPATCH_TOKEN }}
