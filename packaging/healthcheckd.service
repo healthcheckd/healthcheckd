@@ -8,7 +8,7 @@ StartLimitBurst=5
 
 [Service]
 Type=notify
-NotifyAccess=all
+NotifyAccess=main
 ExecStart=/usr/bin/healthcheckd
 ExecReload=/bin/kill -HUP $MAINPID
 

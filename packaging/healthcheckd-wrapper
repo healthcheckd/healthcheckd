@@ -1,0 +1,7 @@
+#!/usr/bin/python3
+import sys
+
+sys.path.insert(0, "/usr/lib/healthcheckd")
+from healthcheckd.__main__ import main
+
+sys.exit(main())

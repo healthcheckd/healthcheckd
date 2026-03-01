@@ -3,26 +3,25 @@ set -euo pipefail
 export PATH="/usr/local/bin:${PATH}"
 
 echo "=== Installing build dependencies ==="
-dnf install -y python3 python3-pip rpm-build
+dnf install -y rpm-build
 
-echo "=== Building PyInstaller binary ==="
+echo "=== Building RPM ==="
 cd /tmp
 rm -rf build-healthcheckd
 cp -r /vagrant build-healthcheckd
 cd build-healthcheckd
-pip install . pyinstaller
-pyinstaller --onefile --name healthcheckd src/healthcheckd/__main__.py
 
-echo "=== Building RPM ==="
-VERSION="1.0.0"
+VERSION="1.1.0"
 RELEASE="1"
 GITHUB_REPO_NAME="healthcheckd"
 DESCRIPTION="Health check daemon for AWS ALB/NLB with Prometheus metrics"
-RPM_ARCHITECTURE="x86_64"
+RPM_ARCHITECTURE="noarch"
+REQUIRES="python3, python3-aiohttp, python3-pyyaml, python3-prometheus_client"
 
-mkdir -p SOURCES/${GITHUB_REPO_NAME}/{usr/bin,usr/lib/systemd/system,usr/share/doc/${GITHUB_REPO_NAME},etc/healthcheckd/config.d} SPECS
+mkdir -p SOURCES/${GITHUB_REPO_NAME}/{usr/bin,usr/lib/healthcheckd,usr/lib/systemd/system,usr/share/doc/${GITHUB_REPO_NAME},etc/healthcheckd/config.d} SPECS
 
-cp dist/healthcheckd SOURCES/${GITHUB_REPO_NAME}/usr/bin/healthcheckd
+cp packaging/healthcheckd-wrapper SOURCES/${GITHUB_REPO_NAME}/usr/bin/healthcheckd
+cp -r src/healthcheckd SOURCES/${GITHUB_REPO_NAME}/usr/lib/healthcheckd/healthcheckd
 cp packaging/healthcheckd.service SOURCES/${GITHUB_REPO_NAME}/usr/lib/systemd/system/healthcheckd.service
 cp LICENSE SOURCES/${GITHUB_REPO_NAME}/usr/share/doc/${GITHUB_REPO_NAME}/LICENSE
 cp packaging/config SOURCES/${GITHUB_REPO_NAME}/etc/healthcheckd/config
@@ -36,6 +35,7 @@ Summary:   ${DESCRIPTION}
 BuildArch: ${RPM_ARCHITECTURE}
 Source0:   %{name}
 License:   Unlicense
+Requires:  ${REQUIRES}
 
 %description
 ${DESCRIPTION}
@@ -59,6 +59,10 @@ install -D -m 644 -o root -g root %{SOURCE0}/usr/lib/systemd/system/healthcheckd
 install -D -m 644 -o root -g root %{SOURCE0}/etc/healthcheckd/config \${RPM_BUILD_ROOT}/etc/healthcheckd/config
 install -D -m 644 -o root -g root %{SOURCE0}/etc/healthcheckd/config.d/example.yaml \${RPM_BUILD_ROOT}/etc/healthcheckd/config.d/example.yaml
 install -D -m 644 -o root -g root %{SOURCE0}/usr/share/doc/healthcheckd/LICENSE \${RPM_BUILD_ROOT}/usr/share/doc/healthcheckd/LICENSE
+$(find SOURCES/${GITHUB_REPO_NAME}/usr/lib/healthcheckd -type f | while read -r f; do
+  rel="${f#SOURCES/${GITHUB_REPO_NAME}/}"
+  echo "install -D -m 644 -o root -g root %{SOURCE0}/${rel} \${RPM_BUILD_ROOT}/${rel}"
+done)
 
 %files
 /usr/bin/healthcheckd
@@ -66,6 +70,9 @@ install -D -m 644 -o root -g root %{SOURCE0}/usr/share/doc/healthcheckd/LICENSE 
 /etc/healthcheckd/config
 /etc/healthcheckd/config.d/example.yaml
 /usr/share/doc/healthcheckd/LICENSE
+$(find SOURCES/${GITHUB_REPO_NAME}/usr/lib/healthcheckd -type f | while read -r f; do
+  echo "/${f#SOURCES/${GITHUB_REPO_NAME}/}"
+done)
 SPEC
 
 rpmbuild --define "_topdir $(pwd)" -bb SPECS/${GITHUB_REPO_NAME}.spec
@@ -73,9 +80,12 @@ rpmbuild --define "_topdir $(pwd)" -bb SPECS/${GITHUB_REPO_NAME}.spec
 RPM_FILE=$(find RPMS/ -name '*.rpm' -type f)
 echo "=== RPM built: ${RPM_FILE} ==="
 
+echo "=== Installing EPEL (for python3-aiohttp) ==="
+dnf install -y epel-release
+
 echo "=== Installing RPM ==="
 rpm -e healthcheckd 2>/dev/null || true
-rpm -i "${RPM_FILE}"
+dnf install -y "${RPM_FILE}"
 
 echo "=== Verifying installation ==="
 echo "Binary:  $(ls -la /usr/bin/healthcheckd)"

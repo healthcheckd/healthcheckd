@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           path: "REPO"
 
@@ -24,8 +24,11 @@ jobs:
             echo "GITHUB_REPO_NAME=$(echo "${GITHUB_REPOSITORY}" | cut -d/ -f2)"
             echo "VERSION=$(echo "${GITHUB_REF_NAME}" | sed -e 's/^v//')"
             echo "DESCRIPTION=Health check daemon for AWS ALB/NLB with Prometheus metrics"
-            echo "DEB_ARCHITECTURE=${ARCHITECTURE:-amd64}"
-            echo "RPM_ARCHITECTURE=${ARCHITECTURE:-x86_64}"
+            echo "DEB_ARCHITECTURE=all"
+            echo "RPM_ARCHITECTURE=noarch"
+            echo "ARCHITECTURE=all"
+            echo "DEPENDS=python3, python3-aiohttp, python3-yaml, python3-prometheus-client"
+            echo "REQUIRES=python3, python3-aiohttp, python3-pyyaml, python3-prometheus_client"
             echo "RELEASE=1"
             cd REPO
             echo "FIRST_YEAR=$(git log $(git rev-list --max-parents=0 HEAD) --date="format:%Y" --format="format:%ad")"
@@ -39,18 +42,6 @@ jobs:
             fi
             cd ..
           ) >> $GITHUB_ENV
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies and build binary
-        run: |
-          cd REPO
-          pip install . pyinstaller
-          pyinstaller --onefile --name healthcheckd src/healthcheckd/__main__.py
-          cd ..
 
       - name: Install system packaging tools
         run: |
@@ -66,11 +57,13 @@ jobs:
       - name: Populate filesystem layout
         run: |
           mkdir -p "SOURCES/${GITHUB_REPO_NAME}/usr/bin"
+          mkdir -p "SOURCES/${GITHUB_REPO_NAME}/usr/lib/healthcheckd"
           mkdir -p "SOURCES/${GITHUB_REPO_NAME}/usr/lib/systemd/system"
           mkdir -p "SOURCES/${GITHUB_REPO_NAME}/usr/share/doc/${GITHUB_REPO_NAME}"
           mkdir -p "SOURCES/${GITHUB_REPO_NAME}/etc/healthcheckd/config.d"
 
-          cp REPO/dist/healthcheckd "SOURCES/${GITHUB_REPO_NAME}/usr/bin/healthcheckd"
+          cp REPO/packaging/healthcheckd-wrapper "SOURCES/${GITHUB_REPO_NAME}/usr/bin/healthcheckd"
+          cp -r REPO/src/healthcheckd "SOURCES/${GITHUB_REPO_NAME}/usr/lib/healthcheckd/healthcheckd"
           cp REPO/packaging/healthcheckd.service "SOURCES/${GITHUB_REPO_NAME}/usr/lib/systemd/system/healthcheckd.service"
           cp REPO/LICENSE "SOURCES/${GITHUB_REPO_NAME}/usr/share/doc/${GITHUB_REPO_NAME}/LICENSE"
           cp REPO/packaging/config "SOURCES/${GITHUB_REPO_NAME}/etc/healthcheckd/config"

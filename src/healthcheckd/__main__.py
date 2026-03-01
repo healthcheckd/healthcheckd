@@ -5,14 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 import signal
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, List
 
-import sdnotify
+import socket
 from aiohttp import web
 
 from healthcheckd import __version__
@@ -107,10 +108,19 @@ def _reload_checks(scheduler: CheckScheduler, config_dir: Path) -> None:
         logger.exception("Config reload failed, keeping current config")
 
 
-def _notify(notifier: Optional[Any], msg: str) -> None:
-    """Send an sd_notify message if a notifier is available."""
-    if notifier is not None:
-        notifier.notify(msg)
+def _sd_notify(msg: str) -> None:
+    """Send a message to systemd via the notify socket."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    if addr[0] == "@":
+        addr = "\0" + addr[1:]
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+    try:
+        sock.connect(addr)
+        sock.sendall(msg.encode())
+    finally:
+        sock.close()
 
 
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
@@ -145,15 +155,12 @@ async def run_daemon(
     main_config: MainConfig,
     checks: List[Any],
     config_dir: Path = CONFIG_DIR,
-    notifier: Optional[Any] = None,
 ) -> None:
     """Run the healthcheckd daemon."""
     metrics = MetricsManager()
 
-    watchdog_cb = None
-    if notifier is not None:
-        def watchdog_cb() -> None:
-            notifier.notify("WATCHDOG=1")
+    def watchdog_cb() -> None:
+        _sd_notify("WATCHDOG=1")
 
     scheduler = CheckScheduler(
         checks=checks,
@@ -174,7 +181,7 @@ async def run_daemon(
     while not scheduler.ready:
         await asyncio.sleep(0.1)
 
-    _notify(notifier, "READY=1")
+    _sd_notify("READY=1")
     logger.info("Ready, listening on %s:%d", main_config.bind, main_config.port)
 
     loop = asyncio.get_running_loop()
@@ -193,7 +200,7 @@ async def run_daemon(
     loop.remove_signal_handler(signal.SIGHUP)
 
     logger.info("Shutting down...")
-    _notify(notifier, "STOPPING=1")
+    _sd_notify("STOPPING=1")
     await scheduler.stop()
     await runner.cleanup()
 
@@ -219,8 +226,7 @@ def main() -> int:
         "Starting healthcheckd %s with %d checks", __version__, len(checks)
     )
 
-    notifier = sdnotify.SystemdNotifier(False)
-    asyncio.run(run_daemon(main_config, checks, CONFIG_DIR, notifier))
+    asyncio.run(run_daemon(main_config, checks, CONFIG_DIR))
     return 0
 
 

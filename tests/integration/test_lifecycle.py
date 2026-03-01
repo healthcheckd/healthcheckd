@@ -10,7 +10,7 @@ import pytest
 
 from healthcheckd.__main__ import (
     _JsonFormatter,
-    _notify,
+    _sd_notify,
     create_check,
     run_daemon,
     setup_logging,
@@ -146,14 +146,40 @@ class TestCreateCheck:
         assert check.name == "root"
 
 
-class TestNotify:
-    def test_notifies_when_notifier_present(self):
-        notifier = mock.Mock()
-        _notify(notifier, "READY=1")
-        notifier.notify.assert_called_once_with("READY=1")
+class TestSdNotify:
+    def test_sends_to_notify_socket(self):
+        import socket as sock_mod
+        import tempfile
+        import os
 
-    def test_noop_when_notifier_is_none(self):
-        _notify(None, "READY=1")  # Should not raise
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "notify.sock")
+            server = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_DGRAM)
+            server.bind(path)
+            try:
+                with mock.patch.dict(os.environ, {"NOTIFY_SOCKET": path}):
+                    _sd_notify("READY=1")
+                data = server.recv(256)
+                assert data == b"READY=1"
+            finally:
+                server.close()
+
+    def test_sends_to_abstract_socket(self):
+        import socket as sock_mod
+
+        server = sock_mod.socket(sock_mod.AF_UNIX, sock_mod.SOCK_DGRAM)
+        server.bind("\0healthcheckd-test-notify")
+        try:
+            with mock.patch.dict(os.environ, {"NOTIFY_SOCKET": "@healthcheckd-test-notify"}):
+                _sd_notify("READY=1")
+            data = server.recv(256)
+            assert data == b"READY=1"
+        finally:
+            server.close()
+
+    def test_noop_without_notify_socket(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            _sd_notify("READY=1")  # Should not raise
 
 
 class TestJsonFormatter:
@@ -260,42 +286,29 @@ class TestRunDaemon:
 
         await asyncio.wait_for(task, timeout=5.0)
 
-    async def test_with_notifier(self):
+    async def test_sends_sd_notify_messages(self):
         config = MainConfig(port=0, bind="127.0.0.1", check_frequency=1)
         check = _make_check("test")
-        notifier = mock.Mock()
 
-        task = asyncio.create_task(
-            run_daemon(
-                config,
-                [check],
-                config_dir=self._empty_dir(),
-                notifier=notifier,
+        with mock.patch("healthcheckd.__main__._sd_notify") as mock_notify:
+            task = asyncio.create_task(
+                run_daemon(
+                    config,
+                    [check],
+                    config_dir=self._empty_dir(),
+                )
             )
-        )
 
-        await asyncio.sleep(0.5)
-        os.kill(os.getpid(), signal.SIGTERM)
-        await asyncio.wait_for(task, timeout=5.0)
+            await asyncio.sleep(0.5)
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.wait_for(task, timeout=5.0)
 
-        # Verify sd_notify calls
-        calls = [c[0][0] for c in notifier.notify.call_args_list]
-        assert "READY=1" in calls
-        assert "STOPPING=1" in calls
-        # Watchdog should have been called at least once
-        assert "WATCHDOG=1" in calls
-
-    async def test_without_notifier(self):
-        config = MainConfig(port=0, bind="127.0.0.1", check_frequency=1)
-        check = _make_check("test")
-
-        task = asyncio.create_task(
-            run_daemon(config, [check], config_dir=self._empty_dir())
-        )
-
-        await asyncio.sleep(0.5)
-        os.kill(os.getpid(), signal.SIGTERM)
-        await asyncio.wait_for(task, timeout=5.0)
+            # Verify sd_notify calls
+            calls = [c[0][0] for c in mock_notify.call_args_list]
+            assert "READY=1" in calls
+            assert "STOPPING=1" in calls
+            # Watchdog should have been called at least once
+            assert "WATCHDOG=1" in calls
 
     async def test_sighup_triggers_reload(self, tmp_path):
         config = MainConfig(port=0, bind="127.0.0.1", check_frequency=1)

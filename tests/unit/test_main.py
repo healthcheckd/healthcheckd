@@ -13,8 +13,7 @@ class TestMain:
     def test_success(self):
         with mock.patch("healthcheckd.__main__.load_main_config") as mc, \
              mock.patch("healthcheckd.__main__.load_check_configs", return_value=[]), \
-             mock.patch("healthcheckd.__main__.asyncio.run") as mock_run, \
-             mock.patch("healthcheckd.__main__.sdnotify"):
+             mock.patch("healthcheckd.__main__.asyncio.run") as mock_run:
             mc.return_value = MainConfig()
             result = main()
             mock_run.call_args[0][0].close()
@@ -53,8 +52,7 @@ class TestMain:
                  "healthcheckd.__main__.load_check_configs",
                  return_value=configs,
              ), \
-             mock.patch("healthcheckd.__main__.asyncio.run") as mock_run, \
-             mock.patch("healthcheckd.__main__.sdnotify"):
+             mock.patch("healthcheckd.__main__.asyncio.run") as mock_run:
             mc.return_value = MainConfig()
             result = main()
             # Close coroutine immediately to avoid unawaited warning
@@ -64,23 +62,8 @@ class TestMain:
     def test_calls_asyncio_run(self):
         with mock.patch("healthcheckd.__main__.load_main_config") as mc, \
              mock.patch("healthcheckd.__main__.load_check_configs", return_value=[]), \
-             mock.patch("healthcheckd.__main__.asyncio.run") as mock_run, \
-             mock.patch("healthcheckd.__main__.sdnotify"):
+             mock.patch("healthcheckd.__main__.asyncio.run") as mock_run:
             mc.return_value = MainConfig()
             main()
             mock_run.assert_called_once()
-            mock_run.call_args[0][0].close()
-
-    def test_creates_sdnotify_notifier(self):
-        mock_notifier = mock.Mock()
-        mock_sdnotify = mock.Mock()
-        mock_sdnotify.SystemdNotifier.return_value = mock_notifier
-
-        with mock.patch("healthcheckd.__main__.load_main_config") as mc, \
-             mock.patch("healthcheckd.__main__.load_check_configs", return_value=[]), \
-             mock.patch("healthcheckd.__main__.asyncio.run") as mock_run, \
-             mock.patch("healthcheckd.__main__.sdnotify", mock_sdnotify):
-            mc.return_value = MainConfig()
-            main()
-            mock_sdnotify.SystemdNotifier.assert_called_once_with(False)
             mock_run.call_args[0][0].close()
