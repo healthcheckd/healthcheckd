@@ -26,12 +26,14 @@ class CheckScheduler:
         frequency: int = 30,
         check_timeout: float = DEFAULT_CHECK_TIMEOUT,
         watchdog_notify: Optional[Callable[[], None]] = None,
+        debug: bool = False,
     ) -> None:
         self._checks = list(checks)
         self._metrics = metrics
         self._frequency = frequency
         self._check_timeout = check_timeout
         self._watchdog_notify = watchdog_notify
+        self._debug = debug
         self._results: Dict[str, CheckResult] = {}
         self._ready = False
         self._running = False
@@ -136,6 +138,17 @@ class CheckScheduler:
 
         cycle_duration = time.monotonic() - cycle_start
         self._metrics.update_cycle(time.time(), cycle_duration)
+
+        if self._debug:
+            for check in self._checks:
+                result = self._results.get(check.name)
+                if result is not None:
+                    status = "healthy" if result.healthy else "UNHEALTHY"
+                    detail = f" ({result.detail})" if result.detail else ""
+                    logger.info(
+                        "Check %s: %s%s", check.name, status, detail
+                    )
+            logger.info("Cycle completed in %.3fs", cycle_duration)
 
         if not self._ready:
             self._ready = True

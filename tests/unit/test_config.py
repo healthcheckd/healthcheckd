@@ -10,10 +10,12 @@ import yaml
 from healthcheckd.config import (
     ConfigError,
     CheckConfig,
+    LogFilter,
     MainConfig,
     load_check_configs,
     load_main_config,
     _load_single_check,
+    _parse_log_filters,
     _read_config_file,
     _validate_check_params,
     DEFAULT_BIND,
@@ -132,6 +134,24 @@ class TestLoadMainConfig:
         cfg = tmp_path / "config"
         cfg.write_text(yaml.dump({"log_level": "VERBOSE"}))
         with pytest.raises(ConfigError, match="Invalid log_level"):
+            load_main_config(cfg)
+
+    def test_debug_defaults_false(self, tmp_path):
+        cfg = tmp_path / "config"
+        cfg.write_text(yaml.dump({"port": 9990}))
+        config = load_main_config(cfg)
+        assert config.debug is False
+
+    def test_debug_true(self, tmp_path):
+        cfg = tmp_path / "config"
+        cfg.write_text(yaml.dump({"debug": True}))
+        config = load_main_config(cfg)
+        assert config.debug is True
+
+    def test_rejects_non_bool_debug(self, tmp_path):
+        cfg = tmp_path / "config"
+        cfg.write_text(yaml.dump({"debug": "yes"}))
+        with pytest.raises(ConfigError, match="debug must be a boolean"):
             load_main_config(cfg)
 
 
@@ -682,3 +702,118 @@ class TestLoadSingleCheckStatError:
         with mock.patch.object(Path, "stat", side_effect=OSError("Permission denied")):
             with pytest.raises(ConfigError, match="Cannot stat config file"):
                 _load_single_check(check_file, config_d)
+
+
+# --- Log filters ---
+
+
+class TestParseLogFilters:
+    def test_none_returns_empty(self):
+        assert _parse_log_filters(None) == ()
+
+    def test_valid_remote_ip_only(self):
+        result = _parse_log_filters([{"remote_ip": "10.0.0.0/8"}])
+        assert len(result) == 1
+        assert result[0].remote_ip is not None
+        assert result[0].user_agent is None
+
+    def test_valid_user_agent_only(self):
+        result = _parse_log_filters([{"user_agent": "kube-probe/\\d+"}])
+        assert len(result) == 1
+        assert result[0].remote_ip is None
+        assert result[0].user_agent is not None
+
+    def test_valid_both_conditions(self):
+        result = _parse_log_filters([{
+            "remote_ip": "192.168.1.0/24",
+            "user_agent": "curl/.*",
+        }])
+        assert len(result) == 1
+        assert result[0].remote_ip is not None
+        assert result[0].user_agent is not None
+
+    def test_multiple_rules(self):
+        result = _parse_log_filters([
+            {"remote_ip": "10.0.0.0/8"},
+            {"user_agent": "ELB-HealthChecker"},
+        ])
+        assert len(result) == 2
+
+    def test_ipv6_network(self):
+        result = _parse_log_filters([{"remote_ip": "::1/128"}])
+        assert len(result) == 1
+
+    def test_non_strict_cidr(self):
+        result = _parse_log_filters([{"remote_ip": "10.0.0.5/8"}])
+        import ipaddress
+        assert result[0].remote_ip == ipaddress.ip_network("10.0.0.0/8")
+
+    def test_rejects_non_list(self):
+        with pytest.raises(ConfigError, match="must be a list"):
+            _parse_log_filters("not a list")
+
+    def test_rejects_non_dict_entry(self):
+        with pytest.raises(ConfigError, match="must be a mapping"):
+            _parse_log_filters(["not a dict"])
+
+    def test_rejects_empty_conditions(self):
+        with pytest.raises(ConfigError, match="at least one condition"):
+            _parse_log_filters([{}])
+
+    def test_rejects_invalid_cidr(self):
+        with pytest.raises(ConfigError, match="invalid network"):
+            _parse_log_filters([{"remote_ip": "not-a-cidr"}])
+
+    def test_rejects_non_string_remote_ip(self):
+        with pytest.raises(ConfigError, match="remote_ip must be a string"):
+            _parse_log_filters([{"remote_ip": 123}])
+
+    def test_rejects_invalid_regex(self):
+        with pytest.raises(ConfigError, match="invalid regex"):
+            _parse_log_filters([{"user_agent": "[invalid"}])
+
+    def test_rejects_non_string_user_agent(self):
+        with pytest.raises(ConfigError, match="user_agent must be a string"):
+            _parse_log_filters([{"user_agent": 123}])
+
+    def test_valid_path_only(self):
+        result = _parse_log_filters([{"path": "/simple"}])
+        assert len(result) == 1
+        assert result[0].path == "/simple"
+        assert result[0].remote_ip is None
+        assert result[0].user_agent is None
+
+    def test_valid_all_three_conditions(self):
+        result = _parse_log_filters([{
+            "remote_ip": "10.0.0.0/8",
+            "user_agent": "kube-probe/.*",
+            "path": "/simple",
+        }])
+        assert len(result) == 1
+        assert result[0].remote_ip is not None
+        assert result[0].user_agent is not None
+        assert result[0].path == "/simple"
+
+    def test_rejects_non_string_path(self):
+        with pytest.raises(ConfigError, match="path must be a string"):
+            _parse_log_filters([{"path": 123}])
+
+
+class TestLoadMainConfigLogFilters:
+    def test_absent_returns_empty_tuple(self, tmp_path):
+        cfg = tmp_path / "config"
+        cfg.write_text(yaml.dump({"port": 9990}))
+        config = load_main_config(cfg)
+        assert config.log_filters == ()
+
+    def test_parses_log_filters(self, tmp_path):
+        cfg = tmp_path / "config"
+        cfg.write_text(yaml.dump({
+            "log_filters": [
+                {"remote_ip": "10.0.0.0/8", "user_agent": "kube-probe/.*"},
+            ],
+        }))
+        config = load_main_config(cfg)
+        assert len(config.log_filters) == 1
+        assert config.log_filters[0].remote_ip is not None
+        assert config.log_filters[0].user_agent is not None

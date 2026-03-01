@@ -8,7 +8,7 @@ healthcheckd runs as a systemd service, periodically executing configurable heal
 
 - **Six check types**: systemd unit state, command execution, HTTP endpoint, TCP port, file existence/age, disk free space
 - **Three HTTP endpoints**: `/simple` (pass/fail), `/complex` (per-check detail), `/metrics` (Prometheus)
-- **Zero runtime dependencies**: Ships as a self-contained PyInstaller binary — no Python installation required on target hosts
+- **OS-native packaging**: Ships as Python source with OS package dependencies (`python3-aiohttp`, `python3-pyyaml`, `python3-prometheus_client`)
 - **systemd integration**: `Type=notify` with `READY=1`, `WATCHDOG=1`, `STOPPING=1` and `SIGHUP` hot-reload
 - **Security hardened**: SSRF protection on HTTP checks, empty subprocess environments, strict input validation, locked-down systemd unit
 - **DEB and RPM packages**: Built automatically via GitHub Actions on version tags
@@ -30,9 +30,12 @@ sudo rpm -i healthcheckd-*.rpm
 ### From source
 
 ```bash
-pip install . pyinstaller
-pyinstaller --onefile --name healthcheckd src/healthcheckd/__main__.py
-sudo cp dist/healthcheckd /usr/bin/healthcheckd
+sudo cp packaging/healthcheckd-wrapper /usr/bin/healthcheckd
+sudo cp -r src/healthcheckd /usr/lib/healthcheckd/healthcheckd
+sudo cp packaging/healthcheckd.service /usr/lib/systemd/system/healthcheckd.service
+sudo cp packaging/config /etc/healthcheckd/config
+sudo mkdir -p /etc/healthcheckd/config.d
+pip install aiohttp pyyaml prometheus_client
 ```
 
 ## Configuration
@@ -44,9 +47,46 @@ port: 9990           # TCP port to listen on (default: 9990)
 bind: "0.0.0.0"      # Bind address (default: 0.0.0.0)
 check_frequency: 30  # Seconds between check cycles (default: 30, minimum: 1)
 log_level: INFO      # DEBUG | INFO | WARNING | ERROR | CRITICAL
+# debug: true        # Log each check result after every cycle (default: false)
+
+# Suppress access log lines matching any rule (all conditions in a rule are ANDed)
+# log_filters:
+#   - remote_ip: "10.0.0.0/8"
+#     user_agent: "kube-probe/\\d+\\.\\d+"
+#     path: "/simple"
 ```
 
 All fields are optional. Sensible defaults are used if the file is missing.
+
+### Debug mode
+
+Set `debug: true` to log each check's name and result at INFO level after every cycle:
+
+```
+Check sshd: healthy
+Check db: UNHEALTHY (Exception: RuntimeError)
+Cycle completed in 0.012s
+```
+
+### Access log filtering
+
+The `log_filters` option suppresses noisy access log entries (e.g., Kubernetes probe traffic). Each rule specifies conditions that are ANDed together — all must match to drop the line. Multiple rules are ORed — any matching rule drops the line.
+
+Available conditions:
+
+| Condition | Type | Description |
+|---|---|---|
+| `remote_ip` | CIDR string | Client IP must be within the network (e.g., `10.0.0.0/8`) |
+| `user_agent` | Regex string | User-Agent header must match the pattern |
+| `path` | String | Request path must match exactly (e.g., `/simple`) |
+
+```yaml
+log_filters:
+  - remote_ip: "10.0.0.0/8"
+    user_agent: "kube-probe/\\d+\\.\\d+"
+    path: "/simple"
+  - user_agent: "ELB-HealthChecker/2\\.0"
+```
 
 ### Check configs: `/etc/healthcheckd/config.d/`
 
@@ -223,7 +263,7 @@ pytest
 A Vagrantfile is included to test RPM packaging on AlmaLinux 10:
 
 ```bash
-vagrant up        # builds binary, creates RPM, installs, starts service, runs smoke tests
+vagrant up        # creates RPM, installs, starts service, runs smoke tests
 vagrant provision # re-run the full test cycle
 vagrant destroy   # clean up
 ```
@@ -240,7 +280,7 @@ src/healthcheckd/
 ├── metrics.py           # Prometheus metrics management
 ├── scheduler.py         # Async check scheduler with watchdog
 ├── security.py          # Input validation
-├── compat.py            # Python 3.10/3.11+ TOML compatibility
+├── compat.py            # TOML loading (stdlib tomllib)
 └── checks/
     ├── __init__.py      # CheckResult dataclass, Check protocol
     ├── disk.py          # Disk free space check

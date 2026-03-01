@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import yaml
 
@@ -46,6 +48,15 @@ class ConfigError(Exception):
 
 
 @dataclass(frozen=True)
+class LogFilter:
+    """A single access log filter rule. All conditions are ANDed."""
+
+    remote_ip: Optional[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]] = None
+    user_agent: Optional[re.Pattern] = None  # type: ignore[type-arg]
+    path: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class MainConfig:
     """Main daemon configuration."""
 
@@ -53,6 +64,8 @@ class MainConfig:
     bind: str = DEFAULT_BIND
     check_frequency: int = DEFAULT_CHECK_FREQUENCY
     log_level: str = DEFAULT_LOG_LEVEL
+    debug: bool = False
+    log_filters: Tuple[LogFilter, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -120,12 +133,95 @@ def load_main_config(path: Path) -> MainConfig:
             f"Must be one of: {sorted(VALID_LOG_LEVELS)}"
         )
 
+    # Validate debug
+    debug = data.get("debug", False)
+    if not isinstance(debug, bool):
+        raise ConfigError(
+            f"debug must be a boolean, got {type(debug).__name__}"
+        )
+
+    # Validate log_filters
+    log_filters = _parse_log_filters(data.get("log_filters"))
+
     return MainConfig(
         port=port,
         bind=bind,
         check_frequency=int(check_frequency),
         log_level=log_level,
+        debug=debug,
+        log_filters=log_filters,
     )
+
+
+def _parse_log_filters(
+    raw: Any,
+) -> Tuple[LogFilter, ...]:
+    """Parse and validate the log_filters config section."""
+    if raw is None:
+        return ()
+
+    if not isinstance(raw, list):
+        raise ConfigError(
+            f"log_filters must be a list, got {type(raw).__name__}"
+        )
+
+    filters: List[LogFilter] = []
+    for i, entry in enumerate(raw):
+        if not isinstance(entry, dict):
+            raise ConfigError(
+                f"log_filters[{i}] must be a mapping, got {type(entry).__name__}"
+            )
+
+        remote_ip = None
+        user_agent = None
+        path = None
+
+        if "remote_ip" in entry:
+            val = entry["remote_ip"]
+            if not isinstance(val, str):
+                raise ConfigError(
+                    f"log_filters[{i}].remote_ip must be a string, "
+                    f"got {type(val).__name__}"
+                )
+            try:
+                remote_ip = ipaddress.ip_network(val, strict=False)
+            except ValueError as e:
+                raise ConfigError(
+                    f"log_filters[{i}].remote_ip: invalid network {val!r}: {e}"
+                )
+
+        if "user_agent" in entry:
+            val = entry["user_agent"]
+            if not isinstance(val, str):
+                raise ConfigError(
+                    f"log_filters[{i}].user_agent must be a string, "
+                    f"got {type(val).__name__}"
+                )
+            try:
+                user_agent = re.compile(val)
+            except re.error as e:
+                raise ConfigError(
+                    f"log_filters[{i}].user_agent: invalid regex {val!r}: {e}"
+                )
+
+        if "path" in entry:
+            val = entry["path"]
+            if not isinstance(val, str):
+                raise ConfigError(
+                    f"log_filters[{i}].path must be a string, "
+                    f"got {type(val).__name__}"
+                )
+            path = val
+
+        if remote_ip is None and user_agent is None and path is None:
+            raise ConfigError(
+                f"log_filters[{i}] must have at least one condition "
+                f"(remote_ip, user_agent, or path)"
+            )
+
+        filters.append(LogFilter(remote_ip=remote_ip, user_agent=user_agent, path=path))
+
+    return tuple(filters)
 
 
 def load_check_configs(config_dir: Path) -> List[CheckConfig]:

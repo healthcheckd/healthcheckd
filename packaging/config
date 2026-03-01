@@ -5,3 +5,10 @@ port: 9990
 bind: "0.0.0.0"
 check_frequency: 30
 log_level: INFO
+# debug: true
+
+# Suppress access log lines matching any rule (all conditions in a rule are ANDed)
+# log_filters:
+#   - remote_ip: "10.0.0.0/8"
+#     user_agent: "kube-probe/\\d+\\.\\d+"
+#     path: "/simple"

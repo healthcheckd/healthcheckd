@@ -327,6 +327,34 @@ class TestCheckSchedulerUpdateChecks:
         assert "healthcheckd_checks_configured 3.0" in output
 
 
+class TestCheckSchedulerDebug:
+    async def test_debug_logs_check_results(self, caplog):
+        metrics = MetricsManager()
+        check = _make_check("sshd", healthy=True)
+        sched = CheckScheduler([check], metrics, debug=True)
+        with caplog.at_level("INFO", logger="healthcheckd.scheduler"):
+            await sched._run_cycle()
+        assert "Check sshd: healthy" in caplog.text
+        assert "Cycle completed in" in caplog.text
+
+    async def test_debug_logs_unhealthy_with_detail(self, caplog):
+        metrics = MetricsManager()
+        check = _make_failing_check("db", RuntimeError("connection refused"))
+        sched = CheckScheduler([check], metrics, debug=True)
+        with caplog.at_level("INFO", logger="healthcheckd.scheduler"):
+            await sched._run_cycle()
+        assert "Check db: UNHEALTHY (Exception: RuntimeError)" in caplog.text
+
+    async def test_debug_off_no_check_logs(self, caplog):
+        metrics = MetricsManager()
+        check = _make_check("sshd", healthy=True)
+        sched = CheckScheduler([check], metrics, debug=False)
+        with caplog.at_level("INFO", logger="healthcheckd.scheduler"):
+            await sched._run_cycle()
+        assert "Check sshd:" not in caplog.text
+        assert "Cycle completed in" not in caplog.text
+
+
 class TestCheckSchedulerConstants:
     def test_max_concurrent_subprocesses(self):
         assert MAX_CONCURRENT_SUBPROCESSES == 10

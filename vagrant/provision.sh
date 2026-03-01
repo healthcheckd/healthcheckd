@@ -11,7 +11,7 @@ rm -rf build-healthcheckd
 cp -r /vagrant build-healthcheckd
 cd build-healthcheckd
 
-VERSION="1.1.0"
+VERSION="1.2.0"
 RELEASE="1"
 GITHUB_REPO_NAME="healthcheckd"
 DESCRIPTION="Health check daemon for AWS ALB/NLB with Prometheus metrics"

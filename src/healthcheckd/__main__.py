@@ -32,7 +32,7 @@ from healthcheckd.config import (
 )
 from healthcheckd.metrics import MetricsManager
 from healthcheckd.scheduler import CheckScheduler
-from healthcheckd.server import create_app
+from healthcheckd.server import AccessLogFilter, create_app
 
 logger = logging.getLogger(__name__)
 
@@ -167,9 +167,15 @@ async def run_daemon(
         metrics=metrics,
         frequency=main_config.check_frequency,
         watchdog_notify=watchdog_cb,
+        debug=main_config.debug,
     )
 
     app = create_app(scheduler, metrics)
+
+    if main_config.log_filters:
+        access_logger = logging.getLogger("aiohttp.access")
+        access_logger.addFilter(AccessLogFilter(main_config.log_filters))
+
     runner = web.AppRunner(app, server_header="")
     await runner.setup()
 

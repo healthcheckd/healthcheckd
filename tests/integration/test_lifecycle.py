@@ -1,8 +1,10 @@
 """Integration tests for daemon lifecycle."""
 
 import asyncio
+import ipaddress
 import logging
 import os
+import re
 import signal
 from unittest import mock
 
@@ -22,7 +24,8 @@ from healthcheckd.checks.http import HttpCheck
 from healthcheckd.checks.run import RunCheck
 from healthcheckd.checks.systemd import SystemdCheck
 from healthcheckd.checks.tcp import TcpCheck
-from healthcheckd.config import CheckConfig, MainConfig
+from healthcheckd.config import CheckConfig, LogFilter, MainConfig
+from healthcheckd.server import AccessLogFilter
 
 
 def _make_check(name, healthy=True):
@@ -334,6 +337,76 @@ class TestRunDaemon:
         # Stop the daemon
         os.kill(os.getpid(), signal.SIGTERM)
         await asyncio.wait_for(task, timeout=5.0)
+
+    async def test_attaches_log_filter_when_configured(self):
+        log_filters = (
+            LogFilter(
+                remote_ip=ipaddress.ip_network("10.0.0.0/8"),
+                user_agent=re.compile(r"kube-probe"),
+            ),
+        )
+        config = MainConfig(
+            port=0, bind="127.0.0.1", check_frequency=1,
+            log_filters=log_filters,
+        )
+        check = _make_check("test")
+
+        access_logger = logging.getLogger("aiohttp.access")
+        original_filters = list(access_logger.filters)
+
+        with mock.patch("healthcheckd.__main__._sd_notify"):
+            task = asyncio.create_task(
+                run_daemon(config, [check], config_dir=self._empty_dir())
+            )
+            await asyncio.sleep(0.5)
+
+            # Verify the filter was attached
+            new_filters = [
+                f for f in access_logger.filters if f not in original_filters
+            ]
+            assert len(new_filters) == 1
+            assert isinstance(new_filters[0], AccessLogFilter)
+            assert new_filters[0].rules == log_filters
+
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.wait_for(task, timeout=5.0)
+
+        # Clean up the filter we added
+        for f in new_filters:
+            access_logger.removeFilter(f)
+
+    async def test_debug_mode_passes_to_scheduler(self):
+        config = MainConfig(
+            port=0, bind="127.0.0.1", check_frequency=1, debug=True,
+        )
+        check = _make_check("test")
+
+        with mock.patch("healthcheckd.__main__._sd_notify"):
+            task = asyncio.create_task(
+                run_daemon(config, [check], config_dir=self._empty_dir())
+            )
+            await asyncio.sleep(0.5)
+
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.wait_for(task, timeout=5.0)
+
+    async def test_no_log_filter_when_empty(self):
+        config = MainConfig(port=0, bind="127.0.0.1", check_frequency=1)
+        check = _make_check("test")
+
+        access_logger = logging.getLogger("aiohttp.access")
+        filter_count_before = len(access_logger.filters)
+
+        with mock.patch("healthcheckd.__main__._sd_notify"):
+            task = asyncio.create_task(
+                run_daemon(config, [check], config_dir=self._empty_dir())
+            )
+            await asyncio.sleep(0.5)
+
+            assert len(access_logger.filters) == filter_count_before
+
+            os.kill(os.getpid(), signal.SIGTERM)
+            await asyncio.wait_for(task, timeout=5.0)
 
     @staticmethod
     def _empty_dir():
