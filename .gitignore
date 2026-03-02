@@ -1,0 +1,5 @@
+__pycache__/
+.vagrant
+.venv/
+.coverage
+*.egg-info/
